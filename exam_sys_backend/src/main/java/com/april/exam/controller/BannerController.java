@@ -3,9 +3,13 @@ package com.april.exam.controller;
 
 import com.april.exam.common.Result;
 import com.april.exam.entity.Banner;
+import com.april.exam.service.BannerService;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,12 +21,15 @@ import java.util.Map;
  * 轮播图控制器 - 处理轮播图管理相关的HTTP请求
  * 包括图片上传、轮播图的CRUD操作、状态切换等功能
  */
+@Slf4j
 @RestController  // REST控制器，返回JSON数据
 @RequestMapping("/api/banners")  // 轮播图API路径前缀
 @CrossOrigin  // 允许跨域访问
 @Tag(name = "轮播图管理", description = "轮播图相关操作，包括图片上传、轮播图增删改查、状态管理等功能")  // Swagger API分组
 public class BannerController {
 
+    @Autowired
+    private BannerService bannerService;
     
     /**
      * 上传轮播图图片
@@ -33,9 +40,11 @@ public class BannerController {
     @Operation(summary = "上传轮播图图片", description = "将图片文件上传到MinIO服务器，返回可访问的图片URL")  // API描述
     public Result<String> uploadBannerImage(
             @Parameter(description = "要上传的图片文件，支持jpg、png、gif等格式，大小限制5MB") 
-            @RequestParam("file") MultipartFile file) {
+            @RequestParam("file") MultipartFile file) throws Exception {
 
-        return Result.success("上传图片地址", "图片上传成功");
+        String url = bannerService.uploadBannerImage(file);
+        log.info("上传轮播图图片成功！ 回显地址为：{}",url);
+        return Result.success(url, "图片上传成功");
     }
     
     /**
@@ -45,7 +54,20 @@ public class BannerController {
     @GetMapping("/active")  // 处理GET请求
     @Operation(summary = "获取启用的轮播图", description = "获取状态为启用的轮播图列表，供前台首页展示使用")  // API描述
     public Result<List<Banner>> getActiveBanners() {
-        return Result.success(null);
+        // 1、拼接查询条件，（激活状态+保证正序排序）
+        LambdaQueryWrapper<Banner> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.orderByDesc(Banner::getSortOrder)
+                .eq(Banner::getIsActive, true);
+
+        // 2、查询符合条件的数据
+        List<Banner> list = bannerService.list(queryWrapper);
+        Result<List<Banner>> result = Result.success(list);
+
+        // 3、装入返回结果 + 日志
+        log.info("查询活跃的轮播图信息成功！查询轮播图数量为： {}, 具体数据为:{}", list.size(), list);
+
+        // 4、返回result
+        return result;
     }
     
     /**
@@ -55,7 +77,18 @@ public class BannerController {
     @GetMapping("/list")  // 处理GET请求
     @Operation(summary = "获取所有轮播图", description = "获取所有轮播图列表，包括启用和禁用的，供管理后台使用")  // API描述
     public Result<List<Banner>> getAllBanners() {
-        return Result.success(null);
+        // 1、查询所有轮播图数据集合
+        LambdaQueryWrapper<Banner> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.orderByAsc(Banner::getSortOrder);
+        List<Banner> list = bannerService.list(queryWrapper);
+
+        //2 、将集合装入result类中即可
+        //    -- 日志输出 info -> 输出本次查询结果
+        Result<List<Banner>> result = Result.success(list);
+        log.info("查询轮播图信息成功！查询轮播图数量为： {}, 具体数据为:{}", list.size(), list);
+
+        //3 、返回结果
+        return result;
     }
     
     /**
@@ -66,8 +99,14 @@ public class BannerController {
     @GetMapping("/{id}")  // 处理GET请求
     @Operation(summary = "根据ID获取轮播图", description = "根据轮播图ID获取单个轮播图的详细信息")  // API描述  
     public Result<Banner> getBannerById(@Parameter(description = "轮播图ID") @PathVariable Long id) {
+        Banner banner = bannerService.getById(id);
 
-      return Result.error("轮播图不存在");
+        if (banner != null) {
+            log.info("查询id为{}的轮播图成功，查询结果为：{}", id, banner);
+            return Result.success(banner);
+        }
+        log.info("查询id为{}的轮播图失败", id);
+        return Result.error("轮播图不存在");
     }
     
     /**
@@ -78,7 +117,9 @@ public class BannerController {
     @PostMapping("/add")  // 处理POST请求
     @Operation(summary = "添加轮播图", description = "创建新的轮播图，需要提供图片URL、标题、跳转链接等信息")  // API描述
     public Result<String> addBanner(@RequestBody Banner banner) {
-        return null;
+        bannerService.save(banner);
+        log.info("保存轮播图成功，id为{}", banner.getId());
+        return Result.success("保存成功");
     }
     
     /**
@@ -89,7 +130,9 @@ public class BannerController {
     @PutMapping("/update")  // 处理PUT请求
     @Operation(summary = "更新轮播图", description = "更新轮播图的信息，包括图片、标题、跳转链接、排序等")  // API描述
     public Result<String> updateBanner(@RequestBody Banner banner) {
-        return null;
+        bannerService.updateById(banner);
+        log.info("更新id为{}的轮播图成功！", banner.getId());
+        return Result.success("更新成功！");
     }
     
     /**
@@ -100,7 +143,15 @@ public class BannerController {
     @DeleteMapping("/delete/{id}")  // 处理DELETE请求
     @Operation(summary = "删除轮播图", description = "根据ID删除指定的轮播图")  // API描述
     public Result<String> deleteBanner(@Parameter(description = "轮播图ID") @PathVariable Long id) {
-        return null;
+
+        boolean update = bannerService.removeById(id);
+        if (update) {
+            log.info("id={}的轮播图删除成功", id);
+            return Result.success("删除成功");
+        } else {
+            log.info("id={}的轮播图删除失败", id);
+            return Result.error("删除失败");
+        }
     }
     
     /**
@@ -114,6 +165,17 @@ public class BannerController {
     public Result<String> toggleBannerStatus(
             @Parameter(description = "轮播图ID") @PathVariable Long id, 
             @Parameter(description = "是否启用，true为启用，false为禁用") @RequestParam Boolean isActive) {
-        return null;
+        LambdaUpdateWrapper<Banner> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(Banner::getId, id)
+                .set(Banner::getIsActive, isActive);
+
+        boolean update = bannerService.update(updateWrapper);
+        if (update) {
+            log.info("id={}的轮播图状态修改成功，修改后的轮播图状态为：{}", id, isActive);
+            return Result.success("修改成功");
+        } else {
+            log.info("id={}的轮播图状态修改失败", id);
+            return Result.error("修改失败");
+        }
     }
 } 

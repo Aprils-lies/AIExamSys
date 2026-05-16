@@ -32,6 +32,8 @@ rm_file/
 /server/*.local.yaml
 server/uploads/
 
+/minio
+
 *.iml
 web/.pnpm-debug.log
 web/pnpm-lock.yaml
