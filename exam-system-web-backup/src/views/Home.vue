@@ -37,16 +37,22 @@
         <!-- 轮播公告区域 -->
         <div class="notice-section">
           <div class="notice-header">
-            <el-icon class="notice-icon"><Bell /></el-icon>
-            <span class="notice-title">系统公告</span>
+            <div class="notice-header-left">
+              <el-icon class="notice-icon"><Bell /></el-icon>
+              <span class="notice-title">系统公告</span>
+            </div>
+            <div class="notice-counter" v-if="noticeList.length > 0">
+              {{ activeNoticeIndex + 1 }} / {{ noticeList.length }}
+            </div>
           </div>
           <div class="notice-carousel">
-            <el-carousel 
-              direction="vertical" 
-              :interval="3000" 
+            <el-carousel
+              ref="noticeCarouselRef"
+              :interval="5000"
               height="220px"
-              :show-arrow="false"
+              arrow="hover"
               indicator-position="none"
+              @change="handleNoticeChange"
             >
               <el-carousel-item v-for="(notice, index) in noticeList" :key="index">
                 <div class="notice-item" @click="handleNoticeClick(notice)">
@@ -255,6 +261,17 @@ const selectedNotice = ref(null)
 
 // 轮播图当前索引
 const activeBannerIndex = ref(0)
+
+// 公告当前索引
+const activeNoticeIndex = ref(0)
+
+// 公告轮播图引用
+const noticeCarouselRef = ref(null)
+
+// 公告切换事件处理
+const handleNoticeChange = (index) => {
+  activeNoticeIndex.value = index
+}
 
 // 获取轮播图数据
 const getBannerList = async () => {
@@ -677,9 +694,15 @@ onMounted(() => {
 .notice-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 20px 24px;
   background: linear-gradient(45deg, #ff6b6b, #ffa500);
   color: white;
+}
+
+.notice-header-left {
+  display: flex;
+  align-items: center;
 }
 
 .notice-icon {
@@ -690,6 +713,13 @@ onMounted(() => {
 .notice-title {
   font-size: 1.1rem;
   font-weight: bold;
+}
+
+.notice-counter {
+  font-size: 0.875rem;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 4px 12px;
+  border-radius: 12px;
 }
 
 .notice-carousel {

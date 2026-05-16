@@ -3,9 +3,12 @@ package com.april.exam.controller;
 import com.april.exam.common.Result;
 import com.april.exam.entity.Notice;
 import com.april.exam.service.NoticeService;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +18,7 @@ import java.util.List;
  * 公告控制器 - 处理系统公告管理相关的HTTP请求
  * 包括公告的增删改查、状态管理、前台展示等功能
  */
+@Slf4j
 @RestController  // REST控制器，返回JSON数据
 @RequestMapping("/api/notices")  // 公告API路径前缀
 @CrossOrigin  // 允许跨域访问
@@ -34,7 +38,17 @@ public class NoticeController {
     @GetMapping("/active")  // 处理GET请求
     @Operation(summary = "获取启用的公告", description = "获取状态为启用的公告列表，供前台首页展示使用")  // API描述
     public Result<List<Notice>> getActiveNotices() {
-        return noticeService.getActiveNotices();
+        LambdaQueryWrapper<Notice> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.orderByDesc(Notice::getPriority)
+                .orderByDesc(Notice::getCreateTime)
+                .eq(Notice::getIsActive, true);
+
+        List<Notice> list = noticeService.list(queryWrapper);
+        Result<List<Notice>> result = Result.success(list);
+
+        log.info("查询活跃的公告信息成功！查询公告数量为： {}, 具体数据为:{}", list.size(), list);
+
+        return result;
     }
     
     /**
@@ -46,7 +60,17 @@ public class NoticeController {
     @Operation(summary = "获取最新公告", description = "获取最新发布的公告列表，用于首页推荐展示")  // API描述
     public Result<List<Notice>> getLatestNotices(
             @Parameter(description = "限制数量", example = "5") @RequestParam(defaultValue = "5") int limit) {
-        return noticeService.getLatestNotices(limit);
+        LambdaQueryWrapper<Notice> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.orderByDesc(Notice::getCreateTime)
+                .eq(Notice::getIsActive, true)
+                .last("LIMIT " + limit);
+
+        List<Notice> list = noticeService.list(queryWrapper);
+        Result<List<Notice>> result = Result.success(list);
+
+        log.info("查询最新的{}条公告信息成功！查询公告数量为： {}", limit, list.size());
+
+        return result;
     }
     
     /**
@@ -56,7 +80,15 @@ public class NoticeController {
     @GetMapping("/list")  // 处理GET请求
     @Operation(summary = "获取所有公告", description = "获取所有公告列表，包括启用和禁用的，供管理后台使用")  // API描述
     public Result<List<Notice>> getAllNotices() {
-        return noticeService.getAllNotices();
+        LambdaQueryWrapper<Notice> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.orderByDesc(Notice::getPriority)
+                .orderByDesc(Notice::getCreateTime);
+        List<Notice> list = noticeService.list(queryWrapper);
+
+        Result<List<Notice>> result = Result.success(list);
+        log.info("查询公告信息成功！查询公告数量为： {}, 具体数据为:{}", list.size(), list);
+
+        return result;
     }
     
     /**
@@ -69,11 +101,13 @@ public class NoticeController {
     public Result<Notice> getNoticeById(
             @Parameter(description = "公告ID") @PathVariable Long id) {
         Notice notice = noticeService.getById(id);
+
         if (notice != null) {
+            log.info("查询id为{}的公告成功，查询结果为：{}", id, notice);
             return Result.success(notice);
-        } else {
-            return Result.error("公告不存在");
         }
+        log.info("查询id为{}的公告失败", id);
+        return Result.error("公告不存在");
     }
     
     /**
@@ -84,7 +118,9 @@ public class NoticeController {
     @PostMapping("/add")  // 处理POST请求
     @Operation(summary = "发布新公告", description = "创建并发布新的系统公告")  // API描述
     public Result<String> addNotice(@RequestBody Notice notice) {
-        return noticeService.addNotice(notice);
+        noticeService.save(notice);
+        log.info("保存公告成功，id为{}", notice.getId());
+        return Result.success("保存成功");
     }
     
     /**
@@ -95,7 +131,9 @@ public class NoticeController {
     @PutMapping("/update")  // 处理PUT请求
     @Operation(summary = "更新公告信息", description = "修改公告的内容、标题、类型等信息")  // API描述
     public Result<String> updateNotice(@RequestBody Notice notice) {
-        return noticeService.updateNotice(notice);
+        noticeService.updateById(notice);
+        log.info("更新id为{}的公告成功！", notice.getId());
+        return Result.success("更新成功！");
     }
     
     /**
@@ -107,7 +145,14 @@ public class NoticeController {
     @Operation(summary = "删除公告", description = "根据ID删除指定的公告")  // API描述
     public Result<String> deleteNotice(
             @Parameter(description = "公告ID") @PathVariable Long id) {
-        return noticeService.deleteNotice(id);
+        boolean remove = noticeService.removeById(id);
+        if (remove) {
+            log.info("id={}的公告删除成功", id);
+            return Result.success("删除成功");
+        } else {
+            log.info("id={}的公告删除失败", id);
+            return Result.error("删除失败");
+        }
     }
     
     /**
@@ -121,6 +166,17 @@ public class NoticeController {
     public Result<String> toggleNoticeStatus(
             @Parameter(description = "公告ID") @PathVariable Long id, 
             @Parameter(description = "是否启用，true为启用，false为禁用") @RequestParam Boolean isActive) {
-        return noticeService.toggleNoticeStatus(id, isActive);
+        LambdaUpdateWrapper<Notice> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(Notice::getId, id)
+                .set(Notice::getIsActive, isActive);
+
+        boolean update = noticeService.update(updateWrapper);
+        if (update) {
+            log.info("id={}的公告状态修改成功，修改后的公告状态为：{}", id, isActive);
+            return Result.success("修改成功");
+        } else {
+            log.info("id={}的公告状态修改失败", id);
+            return Result.error("修改失败");
+        }
     }
 } 
