@@ -2,6 +2,12 @@ package com.april.exam.controller;
 
 import com.april.exam.common.Result;
 import com.april.exam.entity.Question;
+import com.april.exam.entity.QuestionAnswer;
+import com.april.exam.entity.QuestionChoice;
+import com.april.exam.mapper.QuestionAnswerMapper;
+import com.april.exam.mapper.QuestionChoiceMapper;
+import com.april.exam.service.QuestionService;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -40,7 +46,64 @@ import java.util.stream.Collectors;
 @CrossOrigin(origins = "*")  // 允许跨域访问，解决前后端分离开发中的跨域问题
 @Tag(name = "题目管理", description = "题目相关的增删改查操作，包括分页查询、随机获取、热门推荐等功能")  // Swagger标签，用于分组显示API
 public class QuestionController {
-    
+
+    /**
+     * 注入题目业务服务
+     * Spring依赖注入：容器自动将QuestionService实例注入到此字段
+     */
+    @Autowired
+    private QuestionService questionService;
+
+    /**
+     * 注入题目选项数据访问对象
+     * 直接注入Mapper用于处理选择题选项的数据操作
+     */
+    @Autowired
+    private QuestionChoiceMapper questionChoiceMapper;
+
+    /**
+     * 注入题目答案数据访问对象
+     * 直接注入Mapper用于处理题目答案的数据操作
+     */
+    @Autowired
+    private QuestionAnswerMapper questionAnswerMapper;
+
+    /**
+     * 批量为题目列表填充选项和答案，避免N+1查询
+     * @param questions 题目列表
+     */
+    private void fillQuestionsDetailsBatch(List<Question> questions) {
+        // 如果题目列表为空，直接返回
+        if (questions == null || questions.isEmpty()) return;
+        // 收集所有题目ID
+        List<Long> ids = questions.stream().map(Question::getId).toList();
+        // 批量查询所有选项
+        List<QuestionChoice> allChoices = questionChoiceMapper.selectList(
+                new QueryWrapper<QuestionChoice>().in("question_id", ids)
+        );
+        // 批量查询所有答案
+        List<QuestionAnswer> allAnswers = questionAnswerMapper.selectList(
+                new QueryWrapper<QuestionAnswer>().in("question_id", ids)
+        );
+        // 按题目ID分组选项
+        Map<Long, List<QuestionChoice>> choicesMap = allChoices.stream()
+                .collect(Collectors.groupingBy(QuestionChoice::getQuestionId));
+        // 按题目ID分组答案
+        Map<Long, QuestionAnswer> answersMap = allAnswers.stream()
+                .collect(Collectors.toMap(QuestionAnswer::getQuestionId, a -> a));
+        // 填充到题目对象
+        for (Question q : questions) {
+            if ("CHOICE".equals(q.getType())) {
+                List<QuestionChoice> choices = choicesMap.getOrDefault(q.getId(), new ArrayList<>());
+                // 按sort字段排序
+                choices.sort(Comparator.comparingInt(c -> c.getSort() == null ? 0 : c.getSort()));
+                q.setChoices(choices);
+            }
+            q.setAnswer(answersMap.get(q.getId()));
+        }
+    }
+
+
     /**
      * 分页查询题目列表（支持多条件筛选）
      * 
@@ -73,7 +136,42 @@ public class QuestionController {
             @Parameter(description = "题型筛选条件，可选值：CHOICE/JUDGE/TEXT") @RequestParam(required = false) String type,
             @Parameter(description = "关键词搜索，对题目标题进行模糊查询") @RequestParam(required = false) String keyword) {
         // 返回统一格式的成功响应
-        return Result.success(null);
+        // 创建MyBatis Plus分页对象
+        Page<Question> pageInfo = new Page<>(page, size);
+
+        // 构建动态查询条件 - 避免写死SQL，提高代码可维护性
+        QueryWrapper<Question> queryWrapper = new QueryWrapper<>();
+
+        // 按分类筛选 - 精确匹配
+        if (categoryId != null) {
+            queryWrapper.eq("category_id", categoryId);
+        }
+
+        // 按难度筛选 - 精确匹配
+        if (difficulty != null && !difficulty.isEmpty()) {
+            queryWrapper.eq("difficulty", difficulty);
+        }
+
+        // 按题型筛选 - 精确匹配
+        if (type != null && !type.isEmpty()) {
+            queryWrapper.eq("type", type);
+        }
+
+        // 关键词搜索 - 模糊匹配题目标题
+        if (keyword != null && !keyword.isEmpty()) {
+            queryWrapper.like("title", keyword);
+        }
+
+        // 按创建时间倒序排列 - 最新的题目显示在前面
+        queryWrapper.orderByDesc("create_time");
+
+        // 执行分页查询 - 一句代码完成复杂的分页SQL
+        Page<Question> result = questionService.page(pageInfo, queryWrapper);
+        // 优化：批量填充选项和答案，避免N+1查询
+        fillQuestionsDetailsBatch(result.getRecords());
+
+        // 返回统一格式的成功响应
+        return Result.success(result);
     }
     
     /**
@@ -92,7 +190,15 @@ public class QuestionController {
     public Result<Question> getQuestionById(
             @Parameter(description = "题目ID", example = "1") @PathVariable Long id) {
 
-        return Result.success(null);
+        // 调用服务层方法获取题目详情（含关联数据）
+        Question question = questionService.getQuestionWithDetails(id);
+
+        // 根据查询结果返回不同的响应
+        if (question != null) {
+            return Result.success(question);
+        } else {
+            return Result.error("题目未找到");
+        }
     }
     
     /**
@@ -114,7 +220,9 @@ public class QuestionController {
     @Operation(summary = "创建新题目", description = "添加新的考试题目，支持选择题、判断题、简答题等多种题型")  // API描述
     public Result<Question> createQuestion(@RequestBody Question question) {
 
-        return Result.success(null);
+        // 调用服务层保存题目及其关联数据（选项、答案）
+        questionService.saveQuestionWithDetails(question);
+        return Result.success(question);
     }
     
     /**
@@ -134,7 +242,11 @@ public class QuestionController {
     public Result<Question> updateQuestion(
             @Parameter(description = "题目ID") @PathVariable Long id, 
             @RequestBody Question question) {
-        return Result.success(null);
+        // 设置题目ID，确保更新正确的记录
+        question.setId(id);
+        // 调用服务层更新题目及其关联数据
+        questionService.updateQuestionWithDetails(question);
+        return Result.success(question);
     }
     
     /**
@@ -155,8 +267,11 @@ public class QuestionController {
     @Operation(summary = "删除题目", description = "根据ID删除指定的题目，包括关联的选项和答案数据")  // API描述
     public Result<String> deleteQuestion(
             @Parameter(description = "题目ID") @PathVariable Long id) {
+        // MyBatis Plus提供的通用删除方法
+        boolean success = questionService.removeById(id);
+
         // 根据操作结果返回不同的响应
-        if (true) {
+        if (success) {
             return Result.success("题目删除成功");
         } else {
             return Result.error("题目删除失败");
@@ -176,7 +291,8 @@ public class QuestionController {
     public Result<List<Question>> getQuestionsByCategory(
             @Parameter(description = "分类ID") @PathVariable Long categoryId) {
 
-        return Result.success(null);
+        List<Question> questions = questionService.getQuestionsByCategory(categoryId);
+        return Result.success(questions);
     }
     
     /**
@@ -191,7 +307,8 @@ public class QuestionController {
     @Operation(summary = "按难度查询题目", description = "获取指定难度等级的题目列表")  // API描述
     public Result<List<Question>> getQuestionsByDifficulty(
             @Parameter(description = "难度等级，可选值：EASY(简单)/MEDIUM(中等)/HARD(困难)") @PathVariable String difficulty) {
-        return Result.success(null);
+        List<Question> questions = questionService.getQuestionsByDifficulty(difficulty);
+        return Result.success(questions);
     }
     
     /**
@@ -219,7 +336,8 @@ public class QuestionController {
             @Parameter(description = "分类ID限制条件，可选") @RequestParam(required = false) Long categoryId,
             @Parameter(description = "难度限制条件，可选值：EASY/MEDIUM/HARD") @RequestParam(required = false) String difficulty) {
 
-        return Result.success(null);
+        List<Question> questions = questionService.getRandomQuestions(count, categoryId, difficulty);
+        return Result.success(questions);
     }
 
     /**
@@ -257,8 +375,39 @@ public class QuestionController {
     public Result<List<Question>> getPopularQuestions(
             @Parameter(description = "返回题目数量", example = "10") @RequestParam(defaultValue = "10") Integer size) {
 
-        // 异常处理：记录日志并返回友好的错误信息
-        return Result.error("获取热门题目失败");
+        try {
+            // 调用服务层方法获取热门题目
+            List<Question> questions = questionService.getPopularQuestions(size);
+
+            // 如果没有足够的热门题目数据，则补充最新题目
+            if (questions.size() < size) {
+                int needMore = size - questions.size();
+
+                // 获取已有题目的ID列表，用于排除
+                List<Long> existIds = questions.stream()
+                        .map(Question::getId)
+                        .collect(Collectors.toList());
+
+                // 查询最新题目作为补充
+                QueryWrapper<Question> queryWrapper = new QueryWrapper<>();
+                if (!existIds.isEmpty()) {
+                    queryWrapper.notIn("id", existIds);  // 排除已有题目
+                }
+                queryWrapper.orderByDesc("create_time")
+                        .last("LIMIT " + needMore);
+
+                List<Question> latestQuestions = questionService.list(queryWrapper);
+                fillQuestionsDetailsBatch(latestQuestions);
+
+                // 合并热门题目和最新题目
+                questions.addAll(latestQuestions);
+            }
+
+            return Result.success(questions);
+        } catch (Exception e) {
+            // 异常处理：记录日志并返回友好的错误信息
+            return Result.error("获取热门题目失败：" + e.getMessage());
+        }
 
     }
 
@@ -281,7 +430,41 @@ public class QuestionController {
     @Operation(summary = "刷新热门题目缓存", description = "管理员功能，重置或初始化热门题目的访问计数")
     public Result<Integer> refreshPopularQuestions() {
 
-        return Result.error("刷新热门题目缓存失败");
+        try {
+            int count = questionService.refreshPopularQuestionsCache();
+            return Result.success(count, "热门题目缓存刷新成功，共处理 " + count + " 道题目");
+        } catch (Exception e) {
+            return Result.error("刷新热门题目缓存失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 私有辅助方法：为题目填充选项和答案详细信息
+     *
+     * 设计模式：
+     * - 单一职责原则：专门负责数据填充
+     * - 代码复用：多个查询方法都需要填充详情
+     *
+     * 性能考虑：
+     * - N+1查询问题：每个题目都要额外查询选项和答案
+     * - 优化方案：可改为批量查询或使用联表查询
+     *
+     * @param question 需要填充详情的题目对象
+     */
+    private void fillQuestionDetails(Question question) {
+        // 如果是选择题，查询并设置选项
+        if ("CHOICE".equals(question.getType())) {
+            List<QuestionChoice> choices = questionChoiceMapper.selectList(
+                    new QueryWrapper<QuestionChoice>().eq("question_id", question.getId())
+            );
+            question.setChoices(choices);
+        }
+
+        // 查询并设置题目答案
+        QuestionAnswer answer = questionAnswerMapper.selectOne(
+                new QueryWrapper<QuestionAnswer>().eq("question_id", question.getId())
+        );
+        question.setAnswer(answer);
     }
 
 } 
