@@ -2,15 +2,20 @@ package com.april.exam.controller;
 
 
 import com.april.exam.common.Result;
+import com.april.exam.dto.AiGenerateRequestDto;
+import com.april.exam.dto.QuestionImportDto;
+import com.april.exam.service.DeepseekAiService;
+import com.april.exam.service.QuestionService;
 import com.april.exam.utils.ExcelUtil;
-import com.april.exam.vo.AiGenerateRequestVo;
-import com.april.exam.vo.QuestionImportVo;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -26,7 +31,18 @@ import java.util.List;
 @CrossOrigin(origins = "*")  // 允许跨域访问
 @Tag(name = "题目批量操作", description = "题目批量管理相关操作，包括Excel导入、AI生成题目、批量验证等功能")  // Swagger API分组
 public class QuestionBatchController {
-    
+
+    /**
+     * 注入题目业务服务
+     */
+    @Autowired
+    private QuestionService questionService; // 注入题目服务
+
+    /**
+     * 注入AI服务
+     */
+    @Autowired
+    private DeepseekAiService deepSeekAiService; // 注入DeepSeek AI服务
 
     /**
      * 下载Excel导入模板
@@ -35,7 +51,18 @@ public class QuestionBatchController {
     @GetMapping("/template")  // 处理GET请求
     @Operation(summary = "下载Excel导入模板", description = "下载题目批量导入的Excel模板文件")  // API描述
     public ResponseEntity<byte[]> downloadTemplate() {
-      return null;
+        try {
+            byte[] template = ExcelUtil.generateTemplate();
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=question_import_template.xlsx")
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .body(template);
+
+        } catch (Exception e) {
+            log.error("生成Excel模板失败", e);
+            return ResponseEntity.internalServerError().build();
+        }
     }
     
     /**
@@ -45,9 +72,33 @@ public class QuestionBatchController {
      */
     @PostMapping("/preview-excel")  // 处理POST请求
     @Operation(summary = "预览Excel文件内容", description = "解析并预览Excel文件中的题目内容，不会导入到数据库")  // API描述
-    public Result<List<QuestionImportVo>> previewExcel(
+    public Result<List<QuestionImportDto>> previewExcel(
             @Parameter(description = "Excel文件，支持.xls和.xlsx格式") @RequestParam("file") MultipartFile file) {
-       return null;
+        try {
+            // 验证文件格式
+            if (file.isEmpty()) {
+                return Result.error("文件不能为空");
+            }
+
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || (!fileName.endsWith(".xlsx") && !fileName.endsWith(".xls"))) {
+                return Result.error("请上传Excel文件（.xlsx或.xls格式）");
+            }
+
+            // 解析Excel文件
+            List<QuestionImportDto> questions = ExcelUtil.parseExcel(file);
+
+            if (questions.isEmpty()) {
+                return Result.error("Excel文件中没有有效的题目数据");
+            }
+
+            log.info("成功解析Excel文件，共{}道题目", questions.size());
+            return Result.success(questions);
+
+        } catch (Exception e) {
+            log.error("解析Excel文件失败", e);
+            return Result.error("解析Excel文件失败: " + e.getMessage());
+        }
     }
     
     /**
@@ -59,7 +110,36 @@ public class QuestionBatchController {
     @Operation(summary = "从Excel文件批量导入题目", description = "解析Excel文件并将题目批量导入到数据库")  // API描述
     public Result<String> importFromExcel(
             @Parameter(description = "Excel文件，包含题目数据") @RequestParam("file") MultipartFile file) {
-      return null;
+        try {
+            // 验证文件格式
+            if (file.isEmpty()) {
+                return Result.error("文件不能为空");
+            }
+
+            String fileName = file.getOriginalFilename();
+            if (fileName == null || (!fileName.endsWith(".xlsx") && !fileName.endsWith(".xls"))) {
+                return Result.error("请上传Excel文件（.xlsx或.xls格式）");
+            }
+
+            // 解析Excel文件
+            List<QuestionImportDto> questions = ExcelUtil.parseExcel(file);
+
+            if (questions.isEmpty()) {
+                return Result.error("Excel文件中没有有效的题目数据");
+            }
+
+            // 批量导入题目
+            int successCount = questionService.batchImportQuestions(questions);
+
+            String message = String.format("Excel导入完成！成功导入 %d / %d 道题目", successCount, questions.size());
+            log.info(message);
+
+            return Result.success(message);
+
+        } catch (Exception e) {
+            log.error("Excel批量导入失败", e);
+            return Result.error("Excel批量导入失败: " + e.getMessage());
+        }
     }
     
     /**
@@ -69,10 +149,24 @@ public class QuestionBatchController {
      */
     @PostMapping("/ai-generate")  // 处理POST请求
     @Operation(summary = "AI智能生成题目", description = "使用AI技术根据指定主题和要求智能生成题目，支持预览后再决定是否导入")  // API描述
-    public Result<List<QuestionImportVo>> generateQuestionsByAi(
-            @RequestBody @Validated AiGenerateRequestVo request) {
+    public Result<List<QuestionImportDto>> generateQuestionsByAi(
+            @RequestBody @Validated AiGenerateRequestDto request) {
 
-       return Result.error("AI生成题目失败");
+        try {
+            // 调用AI服务生成题目
+            List<QuestionImportDto> questions = deepSeekAiService.generateQuestions(request);
+
+            if (questions.isEmpty()) {
+                return Result.error("AI未能生成题目，请检查参数或稍后重试");
+            }
+
+            log.info("AI成功生成{}道关于【{}】的题目", questions.size(), request.getTopic());
+            return Result.success(questions);
+
+        } catch (Exception e) {
+            log.error("AI生成题目失败", e);
+            return Result.error("AI生成题目失败: " + e.getMessage());
+        }
     }
     
     /**
@@ -82,10 +176,24 @@ public class QuestionBatchController {
      */
     @PostMapping("/import-questions")  // 处理POST请求
     @Operation(summary = "批量导入题目", description = "将题目列表批量导入到数据库，支持Excel解析后的导入或AI生成后的确认导入")  // API描述
-    public Result<String> importQuestions(@RequestBody List<QuestionImportVo> questions) {
+    public Result<String> importQuestions(@RequestBody List<QuestionImportDto> questions) {
+        try {
+            if (questions == null || questions.isEmpty()) {
+                return Result.error("题目列表不能为空");
+            }
 
-       return Result.error("批量导入题目失败!" );
+            // 批量导入题目
+            int successCount = questionService.batchImportQuestions(questions);
 
+            String message = String.format("批量导入完成！成功导入 %d / %d 道题目", successCount, questions.size());
+            log.info(message);
+
+            return Result.success(message);
+
+        } catch (Exception e) {
+            log.error("批量导入题目失败", e);
+            return Result.error("批量导入题目失败: " + e.getMessage());
+        }
     }
     
     /**
@@ -95,9 +203,35 @@ public class QuestionBatchController {
      */
     @PostMapping("/validate")  // 处理POST请求
     @Operation(summary = "验证题目数据", description = "验证题目数据的完整性和格式正确性，返回验证结果和错误信息")  // API描述
-    public Result<String> validateQuestions(@RequestBody List<QuestionImportVo> questions) {
+    public Result<String> validateQuestions(@RequestBody List<QuestionImportDto> questions) {
+        try {
+            if (questions == null || questions.isEmpty()) {
+                return Result.error("题目列表不能为空");
+            }
 
-        return Result.error("验证题目数据失败!");
+            int validCount = 0;
+            StringBuilder errors = new StringBuilder();
+
+            for (int i = 0; i < questions.size(); i++) {
+                QuestionImportDto question = questions.get(i);
+                String error = validateSingleQuestion(question, i + 1);
+                if (error == null) {
+                    validCount++;
+                } else {
+                    errors.append(error).append("\n");
+                }
+            }
+
+            if (validCount == questions.size()) {
+                return Result.success("所有题目数据验证通过");
+            } else {
+                return Result.error("存在无效题目数据：\n" + errors.toString());
+            }
+
+        } catch (Exception e) {
+            log.error("验证题目数据失败", e);
+            return Result.error("验证题目数据失败: " + e.getMessage());
+        }
     }
     
     /**
@@ -106,7 +240,7 @@ public class QuestionBatchController {
      * @param index 题目序号
      * @return 错误信息，如果为null表示验证通过
      */
-    private String validateSingleQuestion(QuestionImportVo question, int index) {
+    private String validateSingleQuestion(QuestionImportDto question, int index) {
         // 验证基本字段
         if (question.getTitle() == null || question.getTitle().trim().isEmpty()) {
             return String.format("第%d题：题目内容不能为空", index);

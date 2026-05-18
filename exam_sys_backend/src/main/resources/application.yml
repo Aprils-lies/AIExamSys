@@ -48,3 +48,12 @@ minio:
   secret-key: minioadmin123
   endpoint: http://localhost:9000
   bucket-name: exam0625
+
+
+deepseek:
+  api:
+    base-url: https://api.deepseek.com
+    api-key:   # 从环境变量获取，或使用默认值
+    model: deepseek-v4-flash  # 使用8k上下文模型进行判卷
+    max-tokens: 2000  # 最大生成token数
+    temperature: 0.3  # 较低的temperature确保判卷结果稳定

@@ -64,7 +64,7 @@
    注意事项：
       批量，允许内部有失败！ for + try
       有尝试机制！ for + try
-      kimi -> for try kimi + catch  -> 题目
+      deepseek -> for try deepseek + catch  -> 题目
 
 4. 预览文件批量导入（备用接口）
    接口分析：
@@ -101,17 +101,17 @@
       响应：
            【{QuestionImportVo}】
    业务分析：
-       1. webClient+kimi参数集成（webClient + kimi）
+       1. webClient+deepseek参数集成（webClient + deepseek）
        2. 调用提示词生成方法生成提示词（上下文）
-       3. 进行kimi调用并获取结果（设计失败重试机制 3次）
+       3. 进行deepseek调用并获取结果（设计失败重试机制 3次）
        4. 进行结果解析 + QuestionImportVo
    实现过程：
-       1. webClient+kimi参数集成
+       1. webClient+deepseek参数集成
            步骤1：导入依赖 【jackson放开】
-           步骤2：定义KimiProperties [模型 api-key uri 温度 max-tokens ]
-                 @ConfigurationProperties(prefix = "kimi.api")
+           步骤2：定义deepseekProperties [模型 api-key uri 温度 max-tokens ]
+                 @ConfigurationProperties(prefix = "deepseek.api")
                  @Data
-                 public class KimiProperties {
+                 public class deepseekProperties {
                      private String model;
                      private String uri;
                      private String apiKey;
@@ -119,7 +119,7 @@
                      private Double temperature;
                  }
 
-                 kimi:
+                 deepseek:
                    api:
                      model: moonshot-v1-32k
                      uri: https://api.moonshot.cn/v1/chat/completions
@@ -128,25 +128,25 @@
                      temperature: 0.3
            步骤3：定义webCient的配置类
                  @Configuration
-                 @EnableConfigurationProperties(KimiProperties.class)
+                 @EnableConfigurationProperties(deepseekProperties.class)
                  public class WebClientConfiguration {
 
 
                      @Autowired
-                     private KimiProperties kimiProperties;
+                     private deepseekProperties deepseekProperties;
 
                      @Bean
                      public WebClient webClient() {
                          WebClient webClient = WebClient.builder().
-                                 baseUrl(kimiProperties.getUri())
+                                 baseUrl(deepseekProperties.getUri())
                                  .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                                 .defaultHeader("Authorization", "Bearer " + kimiProperties.getApiKey())
+                                 .defaultHeader("Authorization", "Bearer " + deepseekProperties.getApiKey())
                                  .build();
                          return webClient;
                      }
                  }
        2. 导入提示词生成方法
-       3. 编写kimi调用和尝试方法
+       3. 编写deepseek调用和尝试方法
           int maxTry = 3; //最多重试3次
           for (int i = 1; i <= 3; i++) {
               try {
@@ -170,16 +170,16 @@
             /**
                *
                * 进行失败重试 给3次机会！！！
-               *    kimi失败场景
+               *    deepseek失败场景
                *      假失败 -》 调用成功 1. 结果格式不对  2. 速率限制 -> try
                *        |
                *      真失败 -》 抛出异常 -> catch
-               * 封装调用kimi模型，最终返结果
+               * 封装调用deepseek模型，最终返结果
                * @param prompt
                * @return 返回生成题目json 结果 / choices / message / content
                */
               @Override
-              public String callKimiAi(String prompt) throws InterruptedException {
+              public String calldeepseekAi(String prompt) throws InterruptedException {
 
                   int maxTry = 3; //最多重试3次
                   for (int i = 1; i <= 3; i++) {
@@ -193,10 +193,10 @@
                           messagesList.add(userMap);
 
                           Map<String,Object> requestBody = new HashMap<>();
-                          requestBody.put("model",kimiProperties.getModel());
+                          requestBody.put("model",deepseekProperties.getModel());
                           requestBody.put("messages",messagesList);
-                          requestBody.put("temperature", kimiProperties.getTemperature());
-                          requestBody.put("max_tokens", kimiProperties.getMaxTokens());
+                          requestBody.put("temperature", deepseekProperties.getTemperature());
+                          requestBody.put("max_tokens", deepseekProperties.getMaxTokens());
 
                           //2. 发起网络请求调用
                           Mono<String> stringMono = webClient.post()
@@ -221,7 +221,7 @@
                           // ```json  ```
                           String content = resultJsonObject.getJSONArray("choices").getJSONObject(0).
                                   getJSONObject("message").getString("content");
-                          log.debug("调用kimi返回的结果为：{}",content);
+                          log.debug("调用deepseek返回的结果为：{}",content);
 
                           if (content == null || content.isEmpty()){
                               throw new RuntimeException("调用成功！但是没有返回结果！！");
@@ -244,7 +244,7 @@
        4. 整合方法并结果解析
            QuestionBatchController
                @Autowired
-                  private KimiAiService kimiAiService;
+                  private deepseekAiService deepseekAiService;
 
                   /**
                    * 使用AI生成题目（预览，不入库）
@@ -255,15 +255,15 @@
                   @Operation(summary = "AI智能生成题目", description = "使用AI技术根据指定主题和要求智能生成题目，支持预览后再决定是否导入")  // API描述
                   public Result<List<QuestionImportVo>> generateQuestionsByAi(
                           @RequestBody @Validated AiGenerateRequestVo request) {
-                      List<QuestionImportVo> questionImportVoList = kimiAiService.aiGenerateQuestions(request);
+                      List<QuestionImportVo> questionImportVoList = deepseekAiService.aiGenerateQuestions(request);
                       log.info("使用ai生成：{} 为标题的题目成功！ 计划生成：{}道题，实际生成：{}道题！",
                               request.getTopic(),request.getCount(),questionImportVoList.size());
                      return Result.success(questionImportVoList);
                   }
 
-          KimiService 生成方法
+          deepseekService 生成方法
    注意事项：
-     1. 练习下webClient + kimi + https://platform.moonshot.cn/docs/api/chat#%E5%85%AC%E5%BC%80%E7%9A%84%E6%9C%8D%E5%8A%A1%E5%9C%B0%E5%9D%80
+     1. 练习下webClient + deepseek + https://platform.moonshot.cn/docs/api/chat#%E5%85%AC%E5%BC%80%E7%9A%84%E6%9C%8D%E5%8A%A1%E5%9C%B0%E5%9D%80
         参数
         响应
         错误响应
